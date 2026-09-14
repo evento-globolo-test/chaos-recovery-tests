@@ -14,12 +14,40 @@ jobs:
       - name: Test 1 - clone exact current production infra tip
         shell: bash
         run: |
-          set -euo pipefail; p="${GITHUB_REPOSITORY_OWNER%-test}"; gh api --paginate "orgs/$p/repos?per_page=100&type=all" --jq '.[]|select(.archived==false)|[.name,.default_branch]|@tsv' >/tmp/repos; i="$(awk -F '\t' '$1~/(^infra$|-infra$|\.infra$)/{print;exit}' /tmp/repos)"; test -n "$i"||{ echo "No production infra visible; configure TEST_FLEET_GITHUB_TOKEN" >&2; exit 1; }; r="${i%%$'\t'*}"; b="${i#*$'\t'}"; s="$(gh api "repos/$p/$r/commits/$b" --jq .sha)"; gh repo clone "$p/$r" .deps/infra -- --depth=1 --branch "$b"; test "$(git -C .deps/infra rev-parse HEAD)"="$s"
+          set -euo pipefail
+          p="${GITHUB_REPOSITORY_OWNER%-test}"
+          gh api --paginate "orgs/$p/repos?per_page=100&type=all" --jq '.[]|select(.archived==false)|[.name,.default_branch]|@tsv' >/tmp/repos
+          i="$(awk -F '\t' '$1~/(^infra$|-infra$|\.infra$)/{print;exit}' /tmp/repos)"
+          test -n "$i" || { echo "No production infra visible; configure TEST_FLEET_GITHUB_TOKEN" >&2; exit 1; }
+          r="${i%%$'\t'*}"; b="${i#*$'\t'}"; s="$(gh api "repos/$p/$r/commits/$b" --jq .sha)"
+          gh repo clone "$p/$r" .deps/infra -- --depth=1 --branch "$b"
+          test "$(git -C .deps/infra rev-parse HEAD)" = "$s"
       - name: Test 2 - modules-first environment and state boundaries are coherent
         shell: bash
         run: |
-          set -euo pipefail; root=.deps/infra; if [[ -f "$root/.ores-infra.toml" ]]; then grep -Eq '^layout[[:space:]]*=[[:space:]]*"modules"' "$root/.ores-infra.toml"; grep -Eq '^modules_root[[:space:]]*=[[:space:]]*"modules"' "$root/.ores-infra.toml"; grep -Eq '^environments_root[[:space:]]*=[[:space:]]*"environments"' "$root/.ores-infra.toml"; for e in preview staging production; do test -d "$root/environments/$e"; done; fi; if [[ -f "$root/environments/backend.r2.hcl.example" ]]; then grep -Eq 'use_lockfile[[:space:]]*=[[:space:]]*true' "$root/environments/backend.r2.hcl.example"; fi
+          set -euo pipefail
+          root=.deps/infra
+          if [[ -f "$root/.ores-infra.toml" ]]; then
+            grep -Eq '^layout[[:space:]]*=[[:space:]]*"modules"' "$root/.ores-infra.toml"
+            grep -Eq '^modules_root[[:space:]]*=[[:space:]]*"modules"' "$root/.ores-infra.toml"
+            grep -Eq '^environments_root[[:space:]]*=[[:space:]]*"environments"' "$root/.ores-infra.toml"
+            for e in preview staging production; do test -d "$root/environments/$e"; done
+          fi
+          if [[ -f "$root/environments/backend.r2.hcl.example" ]]; then grep -Eq 'use_lockfile[[:space:]]*=[[:space:]]*true' "$root/environments/backend.r2.hcl.example"; fi
       - name: Test 3 - Terraform current-tip environments initialize and validate
         shell: bash
         run: |
-          set -euo pipefail; root=.deps/infra; n=0; for e in preview staging production; do d="$root/environments/$e"; if compgen -G "$d/*.tf" >/dev/null; then terraform -chdir="$d" fmt -check -recursive; terraform -chdir="$d" init -backend=false -input=false; terraform -chdir="$d" validate -no-color; n=$((n+1)); fi; done; if [[ "$n" -eq 0 ]]; then if find "$root" -name '*.tf' -print -quit|grep -q .; then terraform fmt -check -recursive "$root"; else echo "No Terraform roots yet; checkout/layout assertions still ran."; fi; fi
+          set -euo pipefail
+          root=.deps/infra; n=0
+          for e in preview staging production; do
+            d="$root/environments/$e"
+            if compgen -G "$d/*.tf" >/dev/null; then
+              terraform -chdir="$d" fmt -check -recursive
+              terraform -chdir="$d" init -backend=false -input=false
+              terraform -chdir="$d" validate -no-color
+              n=$((n+1))
+            fi
+          done
+          if [[ "$n" -eq 0 ]]; then
+            if find "$root" -name '*.tf' -print -quit | grep -q .; then terraform fmt -check -recursive "$root"; else echo "No Terraform roots yet; checkout/layout assertions still ran."; fi
+          fi
